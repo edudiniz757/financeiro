@@ -5,8 +5,8 @@ const FORM_VAZIO = {
   categoria: "Moradia",
   descricao: "",
   valor: "",
-  recorrencia: "mensal", // unico | mensal | parcelado
-  dia_vencimento: new Date().getDate(),
+  recorrencia: "mensal",
+  data_inicio: new Date().toISOString().slice(0, 10),
   parcelas: 12,
 };
 
@@ -58,7 +58,7 @@ function Agendamentos({
   const [form, setForm] = useState(FORM_VAZIO);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState("");
-  const [filtro, setFiltro] = useState("pendentes"); // todos | pendentes | pagos
+  const [filtro, setFiltro] = useState("pendentes");
   const [gruposExpandidos, setGruposExpandidos] = useState({});
 
   function handleChange(e) {
@@ -78,7 +78,12 @@ function Agendamentos({
       return;
     }
 
-    const diaVenc = parseInt(form.dia_vencimento);
+    if (!form.data_inicio) {
+      setErro("Informe a data de início.");
+      setSalvando(false);
+      return;
+    }
+
     const parcelas =
       form.recorrencia === "parcelado"
         ? parseInt(form.parcelas)
@@ -86,19 +91,18 @@ function Agendamentos({
           ? 12
           : 1;
 
+    const [anoInicio, mesInicio, diaInicio] = form.data_inicio
+      .split("-")
+      .map(Number);
+
     const grupoId = crypto.randomUUID();
-    const hoje = new Date();
     const lote = [];
 
     for (let i = 0; i < parcelas; i++) {
-      // Calcula a data de vencimento para cada parcela
-      const dataVenc = new Date(
-        hoje.getFullYear(),
-        hoje.getMonth() + i,
-        diaVenc,
-      );
+      const dataVenc = new Date(anoInicio, mesInicio - 1 + i, diaInicio);
+
       // Corrige se o dia não existe no mês (ex: 31 em fevereiro)
-      if (dataVenc.getDate() !== diaVenc) dataVenc.setDate(0);
+      if (dataVenc.getDate() !== diaInicio) dataVenc.setDate(0);
 
       lote.push({
         tipo: "agendamento",
@@ -111,7 +115,7 @@ function Agendamentos({
         data: dataVenc.toISOString().slice(0, 10),
         status: "pendente",
         recorrente: form.recorrencia === "mensal",
-        dia_vencimento: diaVenc,
+        dia_vencimento: diaInicio,
         grupo_id: grupoId,
       });
     }
@@ -130,18 +134,15 @@ function Agendamentos({
     setGruposExpandidos((prev) => ({ ...prev, [id]: !prev[id] }));
   }
 
-  // ─── Agrupa agendamentos pelo grupo_id ────────────────────────────────────
   const grupos = useMemo(() => {
     const agendamentos = transacoes.filter((t) => t.tipo === "agendamento");
 
-    // Filtra por status
     const filtrados = agendamentos.filter((t) => {
       if (filtro === "pendentes") return t.status === "pendente";
       if (filtro === "pagos") return t.status === "pago";
       return true;
     });
 
-    // Agrupa
     const map = {};
     const semGrupo = [];
 
@@ -156,9 +157,7 @@ function Agendamentos({
 
     const resultado = [];
 
-    // Grupos com múltiplas parcelas
     Object.entries(map).forEach(([grupoId, parcelas]) => {
-      // Para exibição, pega TODOS os agendamentos do grupo (independente do filtro)
       const todasParcelas = transacoes
         .filter((t) => t.tipo === "agendamento" && t.grupo_id === grupoId)
         .sort((a, b) => a.data.localeCompare(b.data));
@@ -192,7 +191,6 @@ function Agendamentos({
       });
     });
 
-    // Agendamentos únicos (sem grupo)
     semGrupo.forEach((t) => {
       resultado.push({ _tipo: "unico", ...t });
     });
@@ -204,7 +202,6 @@ function Agendamentos({
     });
   }, [transacoes, filtro]);
 
-  // Totais gerais de agendamentos
   const totalPendente = useMemo(
     () =>
       transacoes
@@ -261,20 +258,23 @@ function Agendamentos({
             </p>
           </div>
 
-          {/* Dia do vencimento */}
+          {/* Data de início */}
           <div>
             <label className="block text-sm text-gray-600 mb-1">
-              Dia do vencimento
+              Data de início
             </label>
             <input
-              name="dia_vencimento"
-              type="number"
-              min="1"
-              max="31"
-              value={form.dia_vencimento}
+              name="data_inicio"
+              type="date"
+              value={form.data_inicio}
               onChange={handleChange}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
             />
+            <p className="text-xs text-gray-400 mt-1">
+              {form.recorrencia === "unico"
+                ? "Data do vencimento"
+                : "As parcelas seguintes repetem no mesmo dia dos meses seguintes"}
+            </p>
           </div>
 
           {/* Número de parcelas — só para parcelado */}
@@ -346,26 +346,42 @@ function Agendamentos({
           </div>
 
           {/* Preview */}
-          {form.valor && form.dia_vencimento && (
+          {form.valor && form.data_inicio && (
             <div className="bg-indigo-50 rounded-xl p-3 text-xs text-indigo-700 border border-indigo-100">
               {form.recorrencia === "unico" && (
                 <p>
-                  📅 1 vencimento no dia <strong>{form.dia_vencimento}</strong>{" "}
-                  do mês atual
+                  📅 1 vencimento em{" "}
+                  <strong>
+                    {new Date(
+                      form.data_inicio + "T12:00:00",
+                    ).toLocaleDateString("pt-BR")}
+                  </strong>
                 </p>
               )}
               {form.recorrencia === "mensal" && (
                 <p>
-                  🔁 12 vencimentos mensais todo dia{" "}
-                  <strong>{form.dia_vencimento}</strong> · Total:{" "}
+                  🔁 12 vencimentos a partir de{" "}
+                  <strong>
+                    {new Date(
+                      form.data_inicio + "T12:00:00",
+                    ).toLocaleDateString("pt-BR")}
+                  </strong>{" "}
+                  · Todo dia <strong>{form.data_inicio.split("-")[2]}</strong> ·
+                  Total:{" "}
                   <strong>{formatarMoeda(parseFloat(form.valor) * 12)}</strong>
                 </p>
               )}
               {form.recorrencia === "parcelado" && (
                 <p>
                   📦 {form.parcelas}x de{" "}
-                  <strong>{formatarMoeda(parseFloat(form.valor))}</strong> ·
-                  Total:{" "}
+                  <strong>{formatarMoeda(parseFloat(form.valor))}</strong> a
+                  partir de{" "}
+                  <strong>
+                    {new Date(
+                      form.data_inicio + "T12:00:00",
+                    ).toLocaleDateString("pt-BR")}
+                  </strong>{" "}
+                  · Total:{" "}
                   <strong>
                     {formatarMoeda(
                       parseFloat(form.valor) * parseInt(form.parcelas),
@@ -390,7 +406,6 @@ function Agendamentos({
 
       {/* ── Lista de Agendamentos ──────────────────────────────────────────── */}
       <div className="lg:col-span-2">
-        {/* Header com totais e filtros */}
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="font-semibold text-gray-700">📋 Agendamentos</h2>
@@ -438,7 +453,6 @@ function Agendamentos({
         ) : (
           <div className="space-y-3">
             {grupos.map((g) => {
-              // ── Grupo de parcelas ────────────────────────────────────────
               if (g._tipo === "grupo") {
                 const expandido = gruposExpandidos[g.grupo_id];
                 const venc = g.proximo_pendente
@@ -464,7 +478,6 @@ function Agendamentos({
                     key={g.id}
                     className="bg-white rounded-xl shadow-sm border-l-4 border-indigo-400 overflow-hidden"
                   >
-                    {/* Cabeçalho */}
                     <div className="p-4 flex items-center justify-between gap-3">
                       <div className="flex items-center gap-3 min-w-0">
                         <span className="text-2xl shrink-0">
@@ -542,7 +555,6 @@ function Agendamentos({
                       </div>
                     </div>
 
-                    {/* Parcelas do mês atual e próximo (sempre visíveis) */}
                     {visiveis.length > 0 && (
                       <div className="border-t border-gray-100 divide-y divide-gray-50">
                         {visiveis.map((p) => {
@@ -581,7 +593,6 @@ function Agendamentos({
                       </div>
                     )}
 
-                    {/* Parcelas futuras — expansível */}
                     {expandido && futuras.length > 0 && (
                       <div className="border-t border-gray-100 divide-y divide-gray-50">
                         {futuras.map((p) => (
@@ -605,7 +616,6 @@ function Agendamentos({
                       </div>
                     )}
 
-                    {/* Parcelas pagas */}
                     {filtro !== "pendentes" && g._pagas.length > 0 && (
                       <div className="border-t border-gray-100">
                         <button

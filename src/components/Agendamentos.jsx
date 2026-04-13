@@ -15,7 +15,6 @@ function statusVencimento(dataStr) {
   hoje.setHours(0, 0, 0, 0);
   const venc = new Date(dataStr + "T12:00:00");
   const diff = Math.floor((venc - hoje) / (1000 * 60 * 60 * 24));
-
   if (diff < 0)
     return {
       label: `Vencido há ${Math.abs(diff)}d`,
@@ -47,12 +46,224 @@ function formatarMesAno(dataStr) {
   });
 }
 
+// ── Modal de Edição ────────────────────────────────────────────────────────────
+function ModalEdicao({ grupo, categoriasSaida, onEditar, onFechar }) {
+  const temGrupo = grupo._tipo === "grupo";
+  const parcelasPendentes = temGrupo ? grupo._pendentes || [] : [];
+
+  const [form, setForm] = useState({
+    descricao: grupo.descricao || "",
+    categoria: grupo.categoria || "Moradia",
+    valor: grupo.valor ? String(grupo.valor) : "",
+    observacao: grupo.observacao || "",
+  });
+  const [aplicarTodas, setAplicarTodas] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState("");
+
+  function handleChange(e) {
+    const { name, value } = e.target;
+    setForm((f) => ({ ...f, [name]: value }));
+  }
+
+  async function handleSalvar() {
+    if (!form.descricao.trim()) return setErro("Informe a descrição.");
+    const valor = parseFloat(form.valor);
+    if (!valor || valor <= 0) return setErro("Informe um valor válido.");
+
+    setSalvando(true);
+    setErro("");
+
+    try {
+      const campos = {
+        categoria: form.categoria,
+        valor,
+        observacao: form.observacao,
+      };
+
+      if (temGrupo && aplicarTodas && parcelasPendentes.length > 0) {
+        // Atualiza todas as parcelas pendentes do grupo
+        for (const parcela of parcelasPendentes) {
+          const descNova =
+            parcela.descricao?.replace(
+              /^.*?(?= \(\d+\/\d+\)$)/,
+              form.descricao,
+            ) || form.descricao;
+          await onEditar(parcela.id, { ...campos, descricao: descNova });
+        }
+      } else if (temGrupo && grupo.proximo_pendente) {
+        // Atualiza só a próxima parcela pendente
+        const p = grupo.proximo_pendente;
+        const descNova =
+          p.descricao?.replace(/^.*?(?= \(\d+\/\d+\)$)/, form.descricao) ||
+          form.descricao;
+        await onEditar(p.id, { ...campos, descricao: descNova });
+      } else {
+        // Agendamento único
+        await onEditar(grupo.id, { ...campos, descricao: form.descricao });
+      }
+
+      onFechar();
+    } catch {
+      setErro("Erro ao salvar. Tente novamente.");
+    }
+
+    setSalvando(false);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+      {/* Overlay */}
+      <div className="absolute inset-0 bg-black/40" onClick={onFechar} />
+
+      {/* Modal */}
+      <div className="relative bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl shadow-xl p-6 z-10 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-lg font-bold text-gray-800">
+            ✏️ Editar agendamento
+          </h2>
+          <button
+            onClick={onFechar}
+            className="text-gray-400 hover:text-gray-600 text-xl font-bold leading-none"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="space-y-4">
+          {/* Descrição */}
+          <div>
+            <label className="block text-sm text-gray-600 mb-1">
+              Descrição
+            </label>
+            <input
+              name="descricao"
+              value={form.descricao}
+              onChange={handleChange}
+              placeholder="Ex: Aluguel, Netflix..."
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            />
+          </div>
+
+          {/* Categoria */}
+          <div>
+            <label className="block text-sm text-gray-600 mb-1">
+              Categoria
+            </label>
+            <select
+              name="categoria"
+              value={form.categoria}
+              onChange={handleChange}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            >
+              {categoriasSaida.map((c) => (
+                <option key={c}>{c}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Valor */}
+          <div>
+            <label className="block text-sm text-gray-600 mb-1">
+              Valor (R$)
+            </label>
+            <input
+              name="valor"
+              type="number"
+              step="0.01"
+              min="0.01"
+              value={form.valor}
+              onChange={handleChange}
+              placeholder="0,00"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            />
+          </div>
+
+          {/* Observação */}
+          <div>
+            <label className="block text-sm text-gray-600 mb-1">
+              Observação <span className="text-gray-400">(opcional)</span>
+            </label>
+            <textarea
+              name="observacao"
+              value={form.observacao}
+              onChange={handleChange}
+              placeholder="Ex: Boleto vencendo, contato do fornecedor..."
+              rows={2}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none"
+            />
+          </div>
+
+          {/* Aplicar a todas as parcelas pendentes */}
+          {temGrupo && parcelasPendentes.length > 1 && (
+            <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4">
+              <p className="text-sm font-medium text-indigo-800 mb-3">
+                Aplicar alterações em:
+              </p>
+              <div className="space-y-2">
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="escopo"
+                    checked={!aplicarTodas}
+                    onChange={() => setAplicarTodas(false)}
+                    className="accent-indigo-600"
+                  />
+                  <span className="text-sm text-gray-700">
+                    Só na próxima parcela pendente
+                  </span>
+                </label>
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="escopo"
+                    checked={aplicarTodas}
+                    onChange={() => setAplicarTodas(true)}
+                    className="accent-indigo-600"
+                  />
+                  <span className="text-sm text-gray-700">
+                    Em todas as{" "}
+                    <strong>
+                      {parcelasPendentes.length} parcelas pendentes
+                    </strong>
+                  </span>
+                </label>
+              </div>
+            </div>
+          )}
+
+          {erro && <p className="text-red-500 text-sm">{erro}</p>}
+
+          {/* Botões */}
+          <div className="flex gap-3 pt-1">
+            <button
+              onClick={onFechar}
+              className="flex-1 border border-gray-300 text-gray-600 font-semibold py-2.5 rounded-lg text-sm hover:bg-gray-50 transition-colors"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={handleSalvar}
+              disabled={salvando}
+              className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-lg text-sm transition-colors disabled:opacity-60"
+            >
+              {salvando ? "Salvando..." : "Salvar"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Componente Principal ───────────────────────────────────────────────────────
 function Agendamentos({
   transacoes,
   loading,
   onAdicionarLote,
   onApagar,
   onMarcarPago,
+  onEditar,
   categoriasSaida,
 }) {
   const [form, setForm] = useState(FORM_VAZIO);
@@ -60,6 +271,7 @@ function Agendamentos({
   const [erro, setErro] = useState("");
   const [filtro, setFiltro] = useState("pendentes");
   const [gruposExpandidos, setGruposExpandidos] = useState({});
+  const [editando, setEditando] = useState(null); // grupo/agendamento sendo editado
 
   function handleChange(e) {
     const { name, value } = e.target;
@@ -77,7 +289,6 @@ function Agendamentos({
       setSalvando(false);
       return;
     }
-
     if (!form.data_inicio) {
       setErro("Informe a data de início.");
       setSalvando(false);
@@ -94,16 +305,12 @@ function Agendamentos({
     const [anoInicio, mesInicio, diaInicio] = form.data_inicio
       .split("-")
       .map(Number);
-
     const grupoId = crypto.randomUUID();
     const lote = [];
 
     for (let i = 0; i < parcelas; i++) {
       const dataVenc = new Date(anoInicio, mesInicio - 1 + i, diaInicio);
-
-      // Corrige se o dia não existe no mês (ex: 31 em fevereiro)
       if (dataVenc.getDate() !== diaInicio) dataVenc.setDate(0);
-
       lote.push({
         tipo: "agendamento",
         categoria: form.categoria,
@@ -121,12 +328,8 @@ function Agendamentos({
     }
 
     const { error } = await onAdicionarLote(lote);
-
-    if (error) {
-      setErro("Erro ao salvar agendamento.");
-    } else {
-      setForm(FORM_VAZIO);
-    }
+    if (error) setErro("Erro ao salvar agendamento.");
+    else setForm(FORM_VAZIO);
     setSalvando(false);
   }
 
@@ -136,7 +339,6 @@ function Agendamentos({
 
   const grupos = useMemo(() => {
     const agendamentos = transacoes.filter((t) => t.tipo === "agendamento");
-
     const filtrados = agendamentos.filter((t) => {
       if (filtro === "pendentes") return t.status === "pendente";
       if (filtro === "pagos") return t.status === "pago";
@@ -145,26 +347,21 @@ function Agendamentos({
 
     const map = {};
     const semGrupo = [];
-
     filtrados.forEach((t) => {
       if (t.grupo_id) {
         if (!map[t.grupo_id]) map[t.grupo_id] = [];
         map[t.grupo_id].push(t);
-      } else {
-        semGrupo.push(t);
-      }
+      } else semGrupo.push(t);
     });
 
     const resultado = [];
-
-    Object.entries(map).forEach(([grupoId, parcelas]) => {
+    Object.entries(map).forEach(([grupoId]) => {
       const todasParcelas = transacoes
         .filter((t) => t.tipo === "agendamento" && t.grupo_id === grupoId)
         .sort((a, b) => a.data.localeCompare(b.data));
 
       const pendentes = todasParcelas.filter((p) => p.status === "pendente");
       const pagas = todasParcelas.filter((p) => p.status === "pago");
-
       const hojeStr = new Date().toISOString().slice(0, 10);
       const proximoPendente =
         pendentes.find((p) => p.data >= hojeStr) || pendentes[0] || null;
@@ -185,15 +382,14 @@ function Agendamentos({
         pendentes: pendentes.length,
         status: pendentes.length > 0 ? "pendente" : "pago",
         proximo_pendente: proximoPendente,
+        observacao: todasParcelas[0].observacao || "",
         _todas: todasParcelas,
         _pendentes: pendentes,
         _pagas: pagas,
       });
     });
 
-    semGrupo.forEach((t) => {
-      resultado.push({ _tipo: "unico", ...t });
-    });
+    semGrupo.forEach((t) => resultado.push({ _tipo: "unico", ...t }));
 
     return resultado.sort((a, b) => {
       const dA = a.data_inicio || a.data || "";
@@ -210,508 +406,528 @@ function Agendamentos({
     [transacoes],
   );
 
-  const totalAgendamentos = useMemo(
-    () => transacoes.filter((t) => t.tipo === "agendamento").length,
-    [transacoes],
-  );
-
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      {/* ── Formulário ─────────────────────────────────────────────────────── */}
-      <div className="bg-white rounded-2xl shadow-sm p-6 h-fit">
-        <h2 className="font-semibold text-gray-700 mb-1">
-          🗓️ Novo Agendamento
-        </h2>
-        <p className="text-xs text-gray-400 mb-4">
-          Agende contas futuras únicas, mensais ou parceladas.
-        </p>
+    <>
+      {/* Modal */}
+      {editando && (
+        <ModalEdicao
+          grupo={editando}
+          categoriasSaida={categoriasSaida}
+          onEditar={onEditar}
+          onFechar={() => setEditando(null)}
+        />
+      )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Tipo de recorrência */}
-          <div>
-            <label className="block text-sm text-gray-600 mb-1">Tipo</label>
-            <div className="flex rounded-lg overflow-hidden border border-gray-200">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* ── Formulário ───────────────────────────────────────────────────── */}
+        <div className="bg-white rounded-2xl shadow-sm p-6 h-fit">
+          <h2 className="font-semibold text-gray-700 mb-1">
+            🗓️ Novo Agendamento
+          </h2>
+          <p className="text-xs text-gray-400 mb-4">
+            Agende contas futuras únicas, mensais ou parceladas.
+          </p>
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-sm text-gray-600 mb-1">Tipo</label>
+              <div className="flex rounded-lg overflow-hidden border border-gray-200">
+                {[
+                  { key: "unico", label: "Único" },
+                  { key: "mensal", label: "Mensal" },
+                  { key: "parcelado", label: "Parcelado" },
+                ].map(({ key, label }) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, recorrencia: key }))}
+                    className={`cursor-pointer flex-1 py-2 text-xs font-semibold transition-colors ${form.recorrencia === key ? "bg-indigo-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-gray-400 mt-1">
+                {form.recorrencia === "unico" && "Uma única cobrança futura"}
+                {form.recorrencia === "mensal" &&
+                  "Repete mensalmente (gera 12 meses)"}
+                {form.recorrencia === "parcelado" && "Número fixo de parcelas"}
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm text-gray-600 mb-1">
+                Data de início
+              </label>
+              <input
+                name="data_inicio"
+                type="date"
+                value={form.data_inicio}
+                onChange={handleChange}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              />
+              <p className="text-xs text-gray-400 mt-1">
+                {form.recorrencia === "unico"
+                  ? "Data do vencimento"
+                  : "As parcelas seguintes repetem no mesmo dia dos meses seguintes"}
+              </p>
+            </div>
+
+            {form.recorrencia === "parcelado" && (
+              <div>
+                <label className="block text-sm text-gray-600 mb-1">
+                  Nº de parcelas
+                </label>
+                <input
+                  name="parcelas"
+                  type="number"
+                  min="2"
+                  max="60"
+                  value={form.parcelas}
+                  onChange={handleChange}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                />
+              </div>
+            )}
+
+            <div>
+              <label className="block text-sm text-gray-600 mb-1">
+                Categoria
+              </label>
+              <select
+                name="categoria"
+                value={form.categoria}
+                onChange={handleChange}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              >
+                {categoriasSaida.map((c) => (
+                  <option key={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm text-gray-600 mb-1">
+                Descrição
+              </label>
+              <input
+                name="descricao"
+                value={form.descricao}
+                onChange={handleChange}
+                placeholder="Ex: Aluguel, Netflix..."
+                required
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm text-gray-600 mb-1">
+                Valor mensal (R$)
+              </label>
+              <input
+                name="valor"
+                type="number"
+                step="0.01"
+                min="0.01"
+                value={form.valor}
+                onChange={handleChange}
+                required
+                placeholder="0,00"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              />
+            </div>
+
+            {form.valor && form.data_inicio && (
+              <div className="bg-indigo-50 rounded-xl p-3 text-xs text-indigo-700 border border-indigo-100">
+                {form.recorrencia === "unico" && (
+                  <p>
+                    📅 1 vencimento em{" "}
+                    <strong>
+                      {new Date(
+                        form.data_inicio + "T12:00:00",
+                      ).toLocaleDateString("pt-BR")}
+                    </strong>
+                  </p>
+                )}
+                {form.recorrencia === "mensal" && (
+                  <p>
+                    🔁 12 vencimentos a partir de{" "}
+                    <strong>
+                      {new Date(
+                        form.data_inicio + "T12:00:00",
+                      ).toLocaleDateString("pt-BR")}
+                    </strong>{" "}
+                    · Todo dia <strong>{form.data_inicio.split("-")[2]}</strong>{" "}
+                    · Total:{" "}
+                    <strong>
+                      {formatarMoeda(parseFloat(form.valor) * 12)}
+                    </strong>
+                  </p>
+                )}
+                {form.recorrencia === "parcelado" && (
+                  <p>
+                    📦 {form.parcelas}x de{" "}
+                    <strong>{formatarMoeda(parseFloat(form.valor))}</strong> a
+                    partir de{" "}
+                    <strong>
+                      {new Date(
+                        form.data_inicio + "T12:00:00",
+                      ).toLocaleDateString("pt-BR")}
+                    </strong>{" "}
+                    · Total:{" "}
+                    <strong>
+                      {formatarMoeda(
+                        parseFloat(form.valor) * parseInt(form.parcelas),
+                      )}
+                    </strong>
+                  </p>
+                )}
+              </div>
+            )}
+
+            {erro && <p className="text-red-500 text-sm">{erro}</p>}
+
+            <button
+              type="submit"
+              disabled={salvando}
+              className="cursor-pointer w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-lg text-sm transition-colors disabled:opacity-60"
+            >
+              {salvando ? "Salvando..." : "Agendar"}
+            </button>
+          </form>
+        </div>
+
+        {/* ── Lista ────────────────────────────────────────────────────────── */}
+        <div className="lg:col-span-2">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="font-semibold text-gray-700">📋 Agendamentos</h2>
+              {totalPendente > 0 && (
+                <span className="text-xs bg-yellow-100 text-yellow-700 border border-yellow-300 px-2 py-1 rounded-full font-medium">
+                  ⏳ {formatarMoeda(totalPendente)} pendente
+                </span>
+              )}
+            </div>
+            <div className="flex gap-2">
               {[
-                { key: "unico", label: "Único" },
-                { key: "mensal", label: "Mensal" },
-                { key: "parcelado", label: "Parcelado" },
+                { key: "pendentes", label: "Pendentes" },
+                { key: "pagos", label: "Pagos" },
+                { key: "todos", label: "Todos" },
               ].map(({ key, label }) => (
                 <button
                   key={key}
-                  type="button"
-                  onClick={() => setForm((f) => ({ ...f, recorrencia: key }))}
-                  className={`cursor-pointer flex-1 py-2 text-xs font-semibold transition-colors ${
-                    form.recorrencia === key
-                      ? "bg-indigo-600 text-white"
-                      : "bg-white text-gray-500 hover:bg-gray-50"
-                  }`}
+                  onClick={() => setFiltro(key)}
+                  className={`text-xs px-3 py-1.5 rounded-full border transition-colors font-medium ${filtro === key ? "bg-indigo-600 text-white border-indigo-600" : "text-gray-500 border-gray-200 hover:bg-gray-50"}`}
                 >
                   {label}
                 </button>
               ))}
             </div>
-            <p className="text-xs text-gray-400 mt-1">
-              {form.recorrencia === "unico" && "Uma única cobrança futura"}
-              {form.recorrencia === "mensal" &&
-                "Repete mensalmente (gera 12 meses)"}
-              {form.recorrencia === "parcelado" && "Número fixo de parcelas"}
-            </p>
           </div>
 
-          {/* Data de início */}
-          <div>
-            <label className="block text-sm text-gray-600 mb-1">
-              Data de início
-            </label>
-            <input
-              name="data_inicio"
-              type="date"
-              value={form.data_inicio}
-              onChange={handleChange}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-            />
-            <p className="text-xs text-gray-400 mt-1">
-              {form.recorrencia === "unico"
-                ? "Data do vencimento"
-                : "As parcelas seguintes repetem no mesmo dia dos meses seguintes"}
-            </p>
-          </div>
-
-          {/* Número de parcelas — só para parcelado */}
-          {form.recorrencia === "parcelado" && (
-            <div>
-              <label className="block text-sm text-gray-600 mb-1">
-                Nº de parcelas
-              </label>
-              <input
-                name="parcelas"
-                type="number"
-                min="2"
-                max="60"
-                value={form.parcelas}
-                onChange={handleChange}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-              />
+          {loading ? (
+            <p className="text-gray-400 text-center py-12">Carregando...</p>
+          ) : grupos.length === 0 ? (
+            <div className="bg-white rounded-2xl shadow-sm p-12 text-center">
+              <p className="text-4xl mb-3">🗓️</p>
+              <p className="text-gray-500 font-medium mb-1">
+                {filtro === "pendentes"
+                  ? "Nenhum agendamento pendente"
+                  : "Nenhum agendamento"}
+              </p>
+              <p className="text-gray-400 text-sm">
+                Use o formulário ao lado para agendar contas futuras.
+              </p>
             </div>
-          )}
+          ) : (
+            <div className="space-y-3">
+              {grupos.map((g) => {
+                if (g._tipo === "grupo") {
+                  const expandido = gruposExpandidos[g.grupo_id];
+                  const venc = g.proximo_pendente
+                    ? statusVencimento(g.proximo_pendente.data)
+                    : null;
+                  const proximoMes = (() => {
+                    const d = new Date();
+                    d.setMonth(d.getMonth() + 1);
+                    return d.toISOString().slice(0, 7);
+                  })();
+                  const visiveis = g._pendentes.filter(
+                    (p) => p.data.slice(0, 7) <= proximoMes,
+                  );
+                  const futuras = g._pendentes.filter(
+                    (p) => p.data.slice(0, 7) > proximoMes,
+                  );
 
-          {/* Categoria */}
-          <div>
-            <label className="block text-sm text-gray-600 mb-1">
-              Categoria
-            </label>
-            <select
-              name="categoria"
-              value={form.categoria}
-              onChange={handleChange}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-            >
-              {categoriasSaida.map((c) => (
-                <option key={c}>{c}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Descrição */}
-          <div>
-            <label className="block text-sm text-gray-600 mb-1">
-              Descrição
-            </label>
-            <input
-              name="descricao"
-              value={form.descricao}
-              onChange={handleChange}
-              placeholder="Ex: Aluguel, Netflix..."
-              required
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-            />
-          </div>
-
-          {/* Valor */}
-          <div>
-            <label className="block text-sm text-gray-600 mb-1">
-              Valor mensal (R$)
-            </label>
-            <input
-              name="valor"
-              type="number"
-              step="0.01"
-              min="0.01"
-              value={form.valor}
-              onChange={handleChange}
-              required
-              placeholder="0,00"
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-            />
-          </div>
-
-          {/* Preview */}
-          {form.valor && form.data_inicio && (
-            <div className="bg-indigo-50 rounded-xl p-3 text-xs text-indigo-700 border border-indigo-100">
-              {form.recorrencia === "unico" && (
-                <p>
-                  📅 1 vencimento em{" "}
-                  <strong>
-                    {new Date(
-                      form.data_inicio + "T12:00:00",
-                    ).toLocaleDateString("pt-BR")}
-                  </strong>
-                </p>
-              )}
-              {form.recorrencia === "mensal" && (
-                <p>
-                  🔁 12 vencimentos a partir de{" "}
-                  <strong>
-                    {new Date(
-                      form.data_inicio + "T12:00:00",
-                    ).toLocaleDateString("pt-BR")}
-                  </strong>{" "}
-                  · Todo dia <strong>{form.data_inicio.split("-")[2]}</strong> ·
-                  Total:{" "}
-                  <strong>{formatarMoeda(parseFloat(form.valor) * 12)}</strong>
-                </p>
-              )}
-              {form.recorrencia === "parcelado" && (
-                <p>
-                  📦 {form.parcelas}x de{" "}
-                  <strong>{formatarMoeda(parseFloat(form.valor))}</strong> a
-                  partir de{" "}
-                  <strong>
-                    {new Date(
-                      form.data_inicio + "T12:00:00",
-                    ).toLocaleDateString("pt-BR")}
-                  </strong>{" "}
-                  · Total:{" "}
-                  <strong>
-                    {formatarMoeda(
-                      parseFloat(form.valor) * parseInt(form.parcelas),
-                    )}
-                  </strong>
-                </p>
-              )}
-            </div>
-          )}
-
-          {erro && <p className="text-red-500 text-sm">{erro}</p>}
-
-          <button
-            type="submit"
-            disabled={salvando}
-            className="cursor-pointer w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-lg text-sm transition-colors disabled:opacity-60"
-          >
-            {salvando ? "Salvando..." : "Agendar"}
-          </button>
-        </form>
-      </div>
-
-      {/* ── Lista de Agendamentos ──────────────────────────────────────────── */}
-      <div className="lg:col-span-2">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className="font-semibold text-gray-700">📋 Agendamentos</h2>
-            {totalPendente > 0 && (
-              <span className="text-xs bg-yellow-100 text-yellow-700 border border-yellow-300 px-2 py-1 rounded-full font-medium">
-                ⏳ {formatarMoeda(totalPendente)} pendente
-              </span>
-            )}
-          </div>
-          <div className="flex gap-2">
-            {[
-              { key: "pendentes", label: "Pendentes" },
-              { key: "pagos", label: "Pagos" },
-              { key: "todos", label: "Todos" },
-            ].map(({ key, label }) => (
-              <button
-                key={key}
-                onClick={() => setFiltro(key)}
-                className={`text-xs px-3 py-1.5 rounded-full border transition-colors font-medium ${
-                  filtro === key
-                    ? "bg-indigo-600 text-white border-indigo-600"
-                    : "text-gray-500 border-gray-200 hover:bg-gray-50"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {loading ? (
-          <p className="text-gray-400 text-center py-12">Carregando...</p>
-        ) : grupos.length === 0 ? (
-          <div className="bg-white rounded-2xl shadow-sm p-12 text-center">
-            <p className="text-4xl mb-3">🗓️</p>
-            <p className="text-gray-500 font-medium mb-1">
-              {filtro === "pendentes"
-                ? "Nenhum agendamento pendente"
-                : "Nenhum agendamento"}
-            </p>
-            <p className="text-gray-400 text-sm">
-              Use o formulário ao lado para agendar contas futuras.
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {grupos.map((g) => {
-              if (g._tipo === "grupo") {
-                const expandido = gruposExpandidos[g.grupo_id];
-                const venc = g.proximo_pendente
-                  ? statusVencimento(g.proximo_pendente.data)
-                  : null;
-
-                const hojeStr = new Date().toISOString().slice(0, 7);
-                const proximoMes = (() => {
-                  const d = new Date();
-                  d.setMonth(d.getMonth() + 1);
-                  return d.toISOString().slice(0, 7);
-                })();
-
-                const visiveis = g._pendentes.filter(
-                  (p) => p.data.slice(0, 7) <= proximoMes,
-                );
-                const futuras = g._pendentes.filter(
-                  (p) => p.data.slice(0, 7) > proximoMes,
-                );
-
-                return (
-                  <div
-                    key={g.id}
-                    className="bg-white rounded-xl shadow-sm border-l-4 border-indigo-400 overflow-hidden"
-                  >
-                    <div className="p-4 flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <span className="text-2xl shrink-0">
-                          {g.recorrente ? "🔁" : "📦"}
-                        </span>
-                        <div className="min-w-0">
-                          <p className="font-semibold text-gray-800 text-sm truncate">
-                            {g.descricao || g.categoria}
-                          </p>
-                          <p className="text-xs text-gray-400">
-                            {g.categoria} · {formatarMesAno(g.data_inicio)} →{" "}
-                            {formatarMesAno(g.data_fim)}
-                          </p>
-                          <div className="flex flex-wrap items-center gap-2 mt-1">
-                            <span className="text-xs bg-indigo-50 text-indigo-600 border border-indigo-200 px-2 py-0.5 rounded-full font-medium">
-                              {g.total_parcelas}x · {formatarMoeda(g.valor)}/mês
-                            </span>
-                            {g.pagas > 0 && (
-                              <span className="text-xs text-green-600 font-medium">
-                                ✓ {g.pagas}/{g.total_parcelas}{" "}
-                                {g.pagas === 1 ? "paga" : "pagas"}
-                              </span>
+                  return (
+                    <div
+                      key={g.id}
+                      className="bg-white rounded-xl shadow-sm border-l-4 border-indigo-400 overflow-hidden"
+                    >
+                      <div className="p-4 flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <span className="text-2xl shrink-0">
+                            {g.recorrente ? "🔁" : "📦"}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="font-semibold text-gray-800 text-sm truncate">
+                              {g.descricao || g.categoria}
+                            </p>
+                            <p className="text-xs text-gray-400">
+                              {g.categoria} · {formatarMesAno(g.data_inicio)} →{" "}
+                              {formatarMesAno(g.data_fim)}
+                            </p>
+                            {g.observacao && (
+                              <p className="text-xs text-indigo-500 mt-0.5 italic">
+                                📝 {g.observacao}
+                              </p>
                             )}
-                            {g.pendentes > 0 && venc && (
-                              <span
-                                className={`text-xs px-2 py-0.5 rounded-full border ${venc.cor}`}
-                              >
-                                Próx: {venc.label}
+                            <div className="flex flex-wrap items-center gap-2 mt-1">
+                              <span className="text-xs bg-indigo-50 text-indigo-600 border border-indigo-200 px-2 py-0.5 rounded-full font-medium">
+                                {g.total_parcelas}x · {formatarMoeda(g.valor)}
+                                /mês
                               </span>
-                            )}
+                              {g.pagas > 0 && (
+                                <span className="text-xs text-green-600 font-medium">
+                                  ✓ {g.pagas}/{g.total_parcelas}{" "}
+                                  {g.pagas === 1 ? "paga" : "pagas"}
+                                </span>
+                              )}
+                              {g.pendentes > 0 && venc && (
+                                <span
+                                  className={`text-xs px-2 py-0.5 rounded-full border ${venc.cor}`}
+                                >
+                                  Próx: {venc.label}
+                                </span>
+                              )}
+                            </div>
                           </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          {g.pendentes > 0 && (
+                            <div className="text-right">
+                              <p className="font-bold text-sm text-yellow-600">
+                                -{formatarMoeda(g.valor * g.pendentes)}
+                              </p>
+                              <p className="text-xs text-gray-400">
+                                {g.pendentes} restante
+                                {g.pendentes !== 1 ? "s" : ""}
+                              </p>
+                            </div>
+                          )}
+                          {g.proximo_pendente && (
+                            <button
+                              onClick={() => onMarcarPago(g.proximo_pendente)}
+                              className="cursor-pointer text-xs bg-green-500 hover:bg-green-600 text-white px-2.5 py-1.5 rounded-lg transition-colors whitespace-nowrap font-medium"
+                            >
+                              ✓ Pagar próx.
+                            </button>
+                          )}
+                          {/* Botão Editar */}
+                          {onEditar && (
+                            <button
+                              onClick={() => setEditando(g)}
+                              title="Editar agendamento"
+                              className="cursor-pointer text-gray-400 hover:text-indigo-500 transition-colors text-base px-1"
+                            >
+                              ✏️
+                            </button>
+                          )}
+                          {futuras.length > 0 && (
+                            <button
+                              onClick={() => toggleGrupo(g.grupo_id)}
+                              className="cursor-pointer text-xs text-indigo-500 hover:text-indigo-700 px-1 font-medium"
+                              title={
+                                expandido
+                                  ? "Recolher"
+                                  : `Ver +${futuras.length} meses`
+                              }
+                            >
+                              {expandido ? "▲" : `▼ +${futuras.length}`}
+                            </button>
+                          )}
+                          <button
+                            onClick={() => onApagar(g.grupo_id)}
+                            className="cursor-pointer text-gray-300 hover:text-red-500 transition-colors"
+                            title="Apagar todos os agendamentos deste grupo"
+                          >
+                            🗑️
+                          </button>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2 shrink-0">
-                        {g.pendentes > 0 && (
-                          <div className="text-right">
-                            <p className="font-bold text-sm text-yellow-600">
-                              -{formatarMoeda(g.valor * g.pendentes)}
-                            </p>
-                            <p className="text-xs text-gray-400">
-                              {g.pendentes} restante
-                              {g.pendentes !== 1 ? "s" : ""}
-                            </p>
-                          </div>
-                        )}
-                        {g.proximo_pendente && (
-                          <button
-                            onClick={() => onMarcarPago(g.proximo_pendente)}
-                            className="cursor-pointer text-xs bg-green-500 hover:bg-green-600 text-white px-2.5 py-1.5 rounded-lg transition-colors whitespace-nowrap font-medium"
-                          >
-                            ✓ Pagar próx.
-                          </button>
-                        )}
-                        {futuras.length > 0 && (
-                          <button
-                            onClick={() => toggleGrupo(g.grupo_id)}
-                            className="cursor-pointer text-xs text-indigo-500 hover:text-indigo-700 px-1 font-medium"
-                            title={
-                              expandido
-                                ? "Recolher"
-                                : `Ver +${futuras.length} meses`
-                            }
-                          >
-                            {expandido ? "▲" : `▼ +${futuras.length}`}
-                          </button>
-                        )}
-                        <button
-                          onClick={() => onApagar(g.grupo_id)}
-                          className="cursor-pointer text-gray-300 hover:text-red-500 transition-colors"
-                          title="Apagar todos os agendamentos deste grupo"
-                        >
-                          🗑️
-                        </button>
-                      </div>
-                    </div>
-
-                    {visiveis.length > 0 && (
-                      <div className="border-t border-gray-100 divide-y divide-gray-50">
-                        {visiveis.map((p) => {
-                          const pv = statusVencimento(p.data);
-                          return (
-                            <div
-                              key={p.id}
-                              className="px-4 py-2.5 flex items-center justify-between gap-3 bg-gray-50"
-                            >
-                              <div className="flex items-center gap-2">
-                                <span
-                                  className={`text-xs font-medium px-2 py-0.5 rounded-full border ${pv.cor}`}
-                                >
-                                  {pv.label}
-                                </span>
-                                <span className="text-xs text-gray-400">
-                                  {new Date(
-                                    p.data + "T12:00:00",
-                                  ).toLocaleDateString("pt-BR")}
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs font-semibold text-yellow-600">
-                                  -{formatarMoeda(p.valor)}
-                                </span>
-                                <button
-                                  onClick={() => onMarcarPago(p)}
-                                  className="cursor-pointer text-xs bg-green-500 hover:bg-green-600 text-white px-2 py-1 rounded-lg transition-colors"
-                                >
-                                  ✓ Pago
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-
-                    {expandido && futuras.length > 0 && (
-                      <div className="border-t border-gray-100 divide-y divide-gray-50">
-                        {futuras.map((p) => (
-                          <div
-                            key={p.id}
-                            className="px-4 py-2.5 flex items-center justify-between gap-3"
-                          >
-                            <span className="text-xs text-gray-400">
-                              {new Date(
-                                p.data + "T12:00:00",
-                              ).toLocaleDateString("pt-BR", {
-                                month: "long",
-                                year: "numeric",
-                              })}
-                            </span>
-                            <span className="text-xs text-gray-400 font-semibold">
-                              -{formatarMoeda(p.valor)}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {filtro !== "pendentes" && g._pagas.length > 0 && (
-                      <div className="border-t border-gray-100">
-                        <button
-                          onClick={() => toggleGrupo(g.grupo_id + "_pagas")}
-                          className="cursor-pointer w-full text-left px-4 py-2 text-xs text-gray-400 hover:bg-gray-50"
-                        >
-                          {gruposExpandidos[g.grupo_id + "_pagas"] ? "▲" : "▼"}{" "}
-                          {g._pagas.length} paga
-                          {g._pagas.length !== 1 ? "s" : ""}
-                        </button>
-                        {gruposExpandidos[g.grupo_id + "_pagas"] && (
-                          <div className="divide-y divide-gray-50">
-                            {g._pagas
-                              .sort((a, b) => b.data.localeCompare(a.data))
-                              .map((p) => (
-                                <div
-                                  key={p.id}
-                                  className="px-4 py-2 flex items-center justify-between opacity-60"
-                                >
-                                  <span className="text-xs text-gray-500">
+                      {visiveis.length > 0 && (
+                        <div className="border-t border-gray-100 divide-y divide-gray-50">
+                          {visiveis.map((p) => {
+                            const pv = statusVencimento(p.data);
+                            return (
+                              <div
+                                key={p.id}
+                                className="px-4 py-2.5 flex items-center justify-between gap-3 bg-gray-50"
+                              >
+                                <div className="flex items-center gap-2">
+                                  <span
+                                    className={`text-xs font-medium px-2 py-0.5 rounded-full border ${pv.cor}`}
+                                  >
+                                    {pv.label}
+                                  </span>
+                                  <span className="text-xs text-gray-400">
                                     {new Date(
                                       p.data + "T12:00:00",
                                     ).toLocaleDateString("pt-BR")}
                                   </span>
-                                  <span className="text-xs text-green-600 font-semibold">
-                                    ✓ {formatarMoeda(p.valor)}
-                                  </span>
                                 </div>
-                              ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              }
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-semibold text-yellow-600">
+                                    -{formatarMoeda(p.valor)}
+                                  </span>
+                                  <button
+                                    onClick={() => onMarcarPago(p)}
+                                    className="cursor-pointer text-xs bg-green-500 hover:bg-green-600 text-white px-2 py-1 rounded-lg transition-colors"
+                                  >
+                                    ✓ Pago
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
 
-              // ── Agendamento único ─────────────────────────────────────────
-              const venc = statusVencimento(g.data);
-              return (
-                <div
-                  key={g.id}
-                  className={`bg-white rounded-xl shadow-sm p-4 flex items-center justify-between gap-4 border-l-4 ${
-                    g.status === "pago"
-                      ? "border-green-300 opacity-70"
-                      : "border-yellow-400"
-                  }`}
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <span className="text-xl shrink-0">🗓️</span>
-                    <div className="min-w-0">
-                      <p className="font-medium text-gray-800 text-sm truncate">
-                        {g.descricao || g.categoria}
-                      </p>
-                      <p className="text-xs text-gray-400">
-                        {g.categoria} · {formatarData(g.data)}
-                      </p>
-                      {g.status === "pendente" && (
-                        <span
-                          className={`inline-block mt-1 text-xs font-medium px-2 py-0.5 rounded-full border ${venc.cor}`}
-                        >
-                          {venc.label}
-                        </span>
+                      {expandido && futuras.length > 0 && (
+                        <div className="border-t border-gray-100 divide-y divide-gray-50">
+                          {futuras.map((p) => (
+                            <div
+                              key={p.id}
+                              className="px-4 py-2.5 flex items-center justify-between gap-3"
+                            >
+                              <span className="text-xs text-gray-400">
+                                {new Date(
+                                  p.data + "T12:00:00",
+                                ).toLocaleDateString("pt-BR", {
+                                  month: "long",
+                                  year: "numeric",
+                                })}
+                              </span>
+                              <span className="text-xs text-gray-400 font-semibold">
+                                -{formatarMoeda(p.valor)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {filtro !== "pendentes" && g._pagas.length > 0 && (
+                        <div className="border-t border-gray-100">
+                          <button
+                            onClick={() => toggleGrupo(g.grupo_id + "_pagas")}
+                            className="cursor-pointer w-full text-left px-4 py-2 text-xs text-gray-400 hover:bg-gray-50"
+                          >
+                            {gruposExpandidos[g.grupo_id + "_pagas"]
+                              ? "▲"
+                              : "▼"}{" "}
+                            {g._pagas.length} paga
+                            {g._pagas.length !== 1 ? "s" : ""}
+                          </button>
+                          {gruposExpandidos[g.grupo_id + "_pagas"] && (
+                            <div className="divide-y divide-gray-50">
+                              {g._pagas
+                                .sort((a, b) => b.data.localeCompare(a.data))
+                                .map((p) => (
+                                  <div
+                                    key={p.id}
+                                    className="px-4 py-2 flex items-center justify-between opacity-60"
+                                  >
+                                    <span className="text-xs text-gray-500">
+                                      {new Date(
+                                        p.data + "T12:00:00",
+                                      ).toLocaleDateString("pt-BR")}
+                                    </span>
+                                    <span className="text-xs text-green-600 font-semibold">
+                                      ✓ {formatarMoeda(p.valor)}
+                                    </span>
+                                  </div>
+                                ))}
+                            </div>
+                          )}
+                        </div>
                       )}
                     </div>
-                  </div>
+                  );
+                }
 
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span
-                      className={`font-bold text-sm ${g.status === "pago" ? "text-green-600" : "text-yellow-600"}`}
-                    >
-                      {g.status === "pago" ? "✓ " : "-"}
-                      {formatarMoeda(g.valor)}
-                    </span>
-                    {g.status === "pendente" && (
-                      <button
-                        onClick={() => onMarcarPago(g)}
-                        className="cursor-pointer text-xs bg-green-500 hover:bg-green-600 text-white px-2 py-1 rounded-lg transition-colors"
+                // ── Agendamento único ─────────────────────────────────────────
+                const venc = statusVencimento(g.data);
+                return (
+                  <div
+                    key={g.id}
+                    className={`bg-white rounded-xl shadow-sm p-4 flex items-center justify-between gap-4 border-l-4 ${g.status === "pago" ? "border-green-300 opacity-70" : "border-yellow-400"}`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="text-xl shrink-0">🗓️</span>
+                      <div className="min-w-0">
+                        <p className="font-medium text-gray-800 text-sm truncate">
+                          {g.descricao || g.categoria}
+                        </p>
+                        <p className="text-xs text-gray-400">
+                          {g.categoria} · {formatarData(g.data)}
+                        </p>
+                        {g.observacao && (
+                          <p className="text-xs text-indigo-500 mt-0.5 italic">
+                            📝 {g.observacao}
+                          </p>
+                        )}
+                        {g.status === "pendente" && (
+                          <span
+                            className={`inline-block mt-1 text-xs font-medium px-2 py-0.5 rounded-full border ${venc.cor}`}
+                          >
+                            {venc.label}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span
+                        className={`font-bold text-sm ${g.status === "pago" ? "text-green-600" : "text-yellow-600"}`}
                       >
-                        ✓ Pago
+                        {g.status === "pago" ? "✓ " : "-"}
+                        {formatarMoeda(g.valor)}
+                      </span>
+                      {g.status === "pendente" && (
+                        <button
+                          onClick={() => onMarcarPago(g)}
+                          className="cursor-pointer text-xs bg-green-500 hover:bg-green-600 text-white px-2 py-1 rounded-lg transition-colors"
+                        >
+                          ✓ Pago
+                        </button>
+                      )}
+                      {/* Botão Editar */}
+                      {onEditar && (
+                        <button
+                          onClick={() => setEditando(g)}
+                          title="Editar agendamento"
+                          className="cursor-pointer text-gray-400 hover:text-indigo-500 transition-colors text-base px-1"
+                        >
+                          ✏️
+                        </button>
+                      )}
+                      <button
+                        onClick={() => onApagar(g.id)}
+                        className="cursor-pointer text-gray-300 hover:text-red-500 transition-colors"
+                      >
+                        🗑️
                       </button>
-                    )}
-                    <button
-                      onClick={() => onApagar(g.id)}
-                      className="cursor-pointer text-gray-300 hover:text-red-500 transition-colors"
-                    >
-                      🗑️
-                    </button>
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 

@@ -404,6 +404,7 @@ function Dashboard({ user }) {
 
         {aba === "agendamentos" && (
           <Agendamentos
+            onEditar={editarTransacao}
             transacoes={transacoes}
             loading={loading}
             onAdicionarLote={adicionarTransacoes}
